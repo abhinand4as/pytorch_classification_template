@@ -2,12 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
-
-import cv2
 from tqdm import tqdm
-
-import glob
-import random
 
 from albumentations import (
     HorizontalFlip, VerticalFlip, ShiftScaleRotate, Transpose, ShiftScaleRotate,  HueSaturationValue,
@@ -16,20 +11,19 @@ from albumentations import (
 )
 from albumentations.pytorch import ToTensorV2
 
-import timm
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
-
-from sklearn.metrics import accuracy_score
 
 warnings.simplefilter("ignore")
 
-from pandas.core.common import flatten
 import platform
+
+from model.resnet import ResNetModel
+from utils.utils import Utils
+from data.dataset import FlowerDataset
 
 def plot_results(train_acc, valid_acc, train_loss, valid_loss, nb_epochs):
     epochs = [i for i in range(nb_epochs)]
@@ -61,7 +55,7 @@ class Config:
     CFG = {
         'img_size': 100,
         'wd': 1e-6,
-        'epochs': 5
+        'epochs': 1
     }
 
 class Augments:
@@ -88,71 +82,6 @@ class Augments:
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], max_pixel_value=255.0, p=1.0),
             ToTensorV2(p=1.0),
         ], p=1.)
-    
-class ResNetModel(nn.Module):
-    """
-    Model Class for ResNet Models
-    """
-    def __init__(self, num_classes=5, model_name='resnet18', pretrained=True):
-        super(ResNetModel, self).__init__()
-        self.model = timm.create_model(model_name, pretrained=pretrained)
-        self.model.fc = nn.Linear(self.model.fc.in_features, num_classes)
-        
-    def forward(self, x):
-        x = self.model(x)
-        return x
-
-class Utils:
-    def __init__(self, train_data_path, val_data_path):
-        self.train_data_path = train_data_path 
-        self.val_data_path = val_data_path 
-
-        self.train_image_paths = []
-        self.val_image_paths = []
-        self.classes = []
-
-    def get_image_path(self):
-        for data_path in glob.glob(self.train_data_path + '/*'):
-            self.classes.append(data_path.split('/')[-1])
-            self.train_image_paths.append(glob.glob(data_path + '/*'))
-
-        self.train_image_paths = list(flatten(self.train_image_paths))
-        random.shuffle(self.train_image_paths)
-
-        print('train_image_path example: ', self.train_image_paths[0])
-        print('class example: ', self.classes[0])
-
-        # val
-        for data_path in glob.glob(self.val_data_path + '/*'):
-            self.val_image_paths.append(glob.glob(data_path + '/*'))
-        self.val_image_paths = list(flatten(self.val_image_paths))
-        
-        return self.train_image_paths, self.val_image_paths
-    def idx_to_class(self):
-        return {i:j for i, j in enumerate(self.classes)}
-    
-    def class_to_idx(self):
-        return {value:key for key,value in self.idx_to_class().items()}
-
-class FlowerDataset(Dataset):
-    def __init__(self, image_paths, class_to_idx, transform=False):
-        self.image_paths = image_paths
-        self.transform = transform
-        self.class_to_idx = class_to_idx
-    def __len__(self):
-        return len(self.image_paths)
-
-    def __getitem__(self, idx):
-        image_filepath = self.image_paths[idx]
-        image = cv2.imread(image_filepath)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-        label = image_filepath.split('/')[-2]
-        label = self.class_to_idx[label]
-        if self.transform is not None:
-            image = self.transform(image=image)["image"]
-
-        return image, label
 
 class Trainer:
     def __init__(self, train_dataloader, valid_dataloader, model, optimizer, loss_fn, val_loss_fn, scheduler, device="cuda:0", plot_results=True):
