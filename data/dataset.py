@@ -1,4 +1,4 @@
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 import cv2
 
 class FlowerDataset(Dataset):
