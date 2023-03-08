@@ -16,7 +16,7 @@ class FlowerDataset(Dataset):
 
         label = image_filepath.split('/')[-2]
         label = self.class_to_idx[label]
-        if self.transform is not None:
+        if self.transform is not False:
             image = self.transform(image=image)["image"]
 
         return image, label

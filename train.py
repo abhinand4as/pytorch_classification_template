@@ -21,8 +21,9 @@ warnings.simplefilter("ignore")
 import platform
 
 from model.resnet import ResNetModel
-from utils.utils import Utils
+from utils.data_utils import DataUtils
 from data.dataset import FlowerDataset
+from sklearn.model_selection import StratifiedKFold
 
 def plot_results(train_acc, valid_acc, train_loss, valid_loss, nb_epochs):
     epochs = [i for i in range(nb_epochs)]
@@ -249,6 +250,73 @@ class Trainer:
         if verbose:
             print(f"Model Saved at: {os.path.join(path, name)}")
 
+def run_KFoldCV():
+    kfold = StratifiedKFold(n_splits=Config.N_SPLITS, shuffle=True, random_state=2021)
+    
+    fold_scores = {}
+
+    for fold_, (trn_idx, val_idx) in enumerate(kfold.split(train_labels, train_labels['target'])):
+        print(f"{'='*40} Fold: {fold_} {'='*40}")
+        
+        train_data = train_labels.loc[trn_idx]
+        valid_data = train_labels.loc[val_idx]
+        
+        print(f"[INFO] Training on {trn_idx.shape[0]} samples and validating on {valid_data.shape[0]} samples")
+
+        # Make Training and Validation Datasets
+        training_set = SETIData(
+            images=train_data['path'].values,
+            targets=train_data['target'].values,
+            augmentations=Augments.train_augments
+        )
+
+        validation_set = SETIData(
+            images=valid_data['path'].values,
+            targets=valid_data['target'].values,
+            augmentations=Augments.valid_augments
+        )
+
+        train = DataLoader(
+            training_set,
+            batch_size=Config.TRAIN_BS,
+            shuffle=True,
+            num_workers=8,
+            pin_memory=True
+        )
+
+        valid = DataLoader(
+            validation_set,
+            batch_size=Config.VALID_BS,
+            shuffle=False,
+            num_workers=8
+        )
+
+        model = VITModel().to(DEVICE)
+        print(f"[INFO] Training Model: {Config.model_name}")
+        nb_train_steps = int(len(train_data) / Config.TRAIN_BS * Config.NB_EPOCHS)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
+
+        trainer = Trainer(model, optimizer, None, train, valid, DEVICE)
+        
+        per_fold_score = []
+        for epoch in range(1, Config.NB_EPOCHS+1):
+            print(f"\n{'--'*5} EPOCH: {epoch} {'--'*5}\n")
+
+            # Train for 1 epoch
+            tr_lss = trainer.train_one_epoch()
+            
+            # Validate for 1 epoch
+            current_roc, vl_lss = trainer.valid_one_epoch()
+            print(f"Validation ROC-AUC: {current_roc:.4f}")
+            
+            per_fold_score.append(current_roc)
+            torch.save(trainer.get_model().state_dict(), f"{Config.model_name}_fold_{fold_}.pt")
+        
+        fold_scores[fold_] = per_fold_score
+        del training_set, validation_set, train, valid, model, optimizer, trainer, current_roc
+        gc.collect()
+        torch.cuda.empty_cache()
+
 
 if __name__ == '__main__':
     if torch.cuda.is_available():
@@ -258,12 +326,14 @@ if __name__ == '__main__':
         print("\n[INFO] GPU not found. Using CPU: {}\n".format(platform.processor()))
         DEVICE = torch.device('cpu')
 
-    utils = Utils(
+    utils = DataUtils(
         'dataset/train',
         'dataset/val'
     )
 
-    train_image_paths, val_image_paths = utils.get_image_path()
+    train_image_paths = utils.get_train_images() 
+    val_image_paths = utils.get_val_images()
+
     train_set = FlowerDataset(train_image_paths, utils.class_to_idx(), Augments.train_augments)
     valid_set = FlowerDataset(val_image_paths, utils.class_to_idx(),Augments.valid_augments)
 
